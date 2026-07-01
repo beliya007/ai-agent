@@ -407,6 +407,71 @@ class ToolRegistry:
         print(f"✅ 工具 '{name}' 已注册。")
 ```
 
+**使用：**functionCall
+
+```python
+# 步骤1：为每个LLM提供商定义函数
+# OpenAI格式
+openai_tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "search_github",
+            "description": "搜索GitHub仓库",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词"}
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+# Claude格式
+claude_tools = [
+    {
+        "name": "search_github",
+        "description": "搜索GitHub仓库",
+        "input_schema": {  # 注意：不是parameters
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索关键词"}
+            },
+            "required": ["query"]
+        }
+    }
+]
+# 步骤2：自己实现工具函数
+def search_github(query):
+    import requests
+    response = requests.get(
+        "https://api.github.com/search/repositories",
+        params={"q": query}
+    )
+    return response.json()
+# 步骤3：处理不同模型的响应格式
+# OpenAI的响应
+if response.choices[0].message.tool_calls:
+    tool_call = response.choices[0].message.tool_calls[0]
+    result = search_github(**json.loads(tool_call.function.arguments))
+# Claude的响应
+if response.content[0].type == "tool_use":
+    tool_use = response.content[0]
+    result = search_github(**tool_use.input)
+    
+#OpenAI 标准完整分发逻辑
+if response.choices[0].message.tool_calls:
+    tool_call = response.choices[0].message.tool_calls[0]
+    tool_name = tool_call.function.name  # 从响应获取LLM指定的工具名
+    args = json.loads(tool_call.function.arguments)
+    # 根据LLM返回的工具名，动态匹配对应函数执行
+    target_func = tool_mapping[tool_name]
+    result = target_func(**args)
+```
+
+
+
 # 5. 记忆
 
 **why**
@@ -967,3 +1032,367 @@ TerminalTool 通过多层安全机制确保系统安全：
 **第四层：输出大小限制**限制命令输出的大小，防止内存溢出：
 
 # 8. 智能体通信
+
+**通信协议的核心价值**正是解决这些问题。它提供了一套标准化的接口规范，让智能体能够以统一的方式访问各种外部服务，而无需为每个服务编写专门的适配器。这就像互联网的 TCP/IP 协议，它让不同的设备能够相互通信，而不需要为每种设备编写专门的通信代码。
+
+- 如果你的智能体需要访问外部服务（文件、数据库、API），选择**MCP**
+- 如果你需要多个智能体相互协作完成任务，选择**A2A**
+- 如果你要构建大规模的智能体生态系统，考虑**ANP**
+
+## 8.1 MCP
+
+**三层架构的职责：**
+
+1. **Host（宿主层）**：Claude Desktop 作为 Host，负责接收用户提问并与 Claude 模型交互。Host 是用户直接交互的界面，它管理整个对话流程。
+2. **Client（客户端层）**：当 Claude 模型决定需要访问文件系统时，Host 中内置的 MCP Client 被激活。Client 负责与适当的 MCP Server 建立连接，发送请求并接收响应。
+3. **Server（服务器层）**：文件系统 MCP Server 被调用，执行实际的文件扫描操作，访问桌面目录，并返回找到的文档列表。
+
+**完整的交互流程：**用户问题 → Claude Desktop(Host) → Claude 模型分析 → 需要文件信息 → MCP Client 连接 → 文件系统 MCP Server → 执行操作 → 返回结果 → Claude 生成回答 → 显示在 Claude Desktop 上
+
+```python
+from hello_agents.protocols import MCPClient
+
+# 步骤1：连接到社区提供的MCP服务器（无需自己实现）
+github_client = MCPClient([
+    "npx", "-y", "@modelcontextprotocol/server-github"
+])
+fs_client = MCPClient([
+    "npx", "-y", "@modelcontextprotocol/server-filesystem", "."
+])
+# 步骤2：统一的调用方式（与模型无关）
+async with github_client:
+    # 自动发现工具
+    tools = await github_client.list_tools()
+
+    # 调用工具（标准化接口）
+    result = await github_client.call_tool(
+        "search_repositories",
+        {"query": "AI agents"}
+    )
+# 步骤3：任何支持MCP的模型都能使用
+# OpenAI、Claude、Llama等都使用相同的MCP客户端
+```
+
+## 8.2 A2A
+
+MCP 协议解决了智能体与工具的交互，而 A2A 协议则解决智能体之间的协作问题。在一个需要多智能体（如研究员、撰写员、编辑）协作的任务中，它们需要通信、委托任务、协商能力和同步状态。
+
+```python
+from hello_agents.protocols.a2a.implementation import A2AServer, A2A_AVAILABLE
+
+def create_calculator_agent():
+    print("🧮 创建计算器智能体")
+
+    # 创建 A2A 服务器
+    calculator = A2AServer(
+        name="calculator-agent",
+        description="专业的数学计算智能体",
+        version="1.0.0",
+        capabilities={
+            "math": ["addition", "subtraction", "multiplication", "division"],
+            "advanced": ["power", "sqrt", "factorial"]
+        }
+    )
+
+    # 添加基础计算技能
+    @calculator.skill("add")
+    def add_numbers(query: str) -> str:
+        """加法计算"""
+        try:
+            # 简单解析 "计算 5 + 3" 格式
+            parts = query.replace("计算", "").replace("加", "+").replace("加上", "+")
+            if "+" in parts:
+                numbers = [float(x.strip()) for x in parts.split("+")]
+                result = sum(numbers)
+                return f"计算结果: {' + '.join(map(str, numbers))} = {result}"
+            else:
+                return "请使用格式: 计算 5 + 3"
+        except Exception as e:
+            return f"计算错误: {e}"
+
+    @calculator.skill("multiply")
+    def multiply_numbers(query: str) -> str:
+        """乘法计算"""
+        try:
+            parts = query.replace("计算", "").replace("乘以", "*").replace("×", "*")
+            if "*" in parts:
+                numbers = [float(x.strip()) for x in parts.split("*")]
+                result = 1
+                for num in numbers:
+                    result *= num
+                return f"计算结果: {' × '.join(map(str, numbers))} = {result}"
+            else:
+                return "请使用格式: 计算 5 * 3"
+        except Exception as e:
+            return f"计算错误: {e}"
+
+    @calculator.skill("info")
+    def get_info(query: str) -> str:
+        """获取智能体信息"""
+        return f"我是 {calculator.name}，可以进行基础数学计算。支持的技能: {list(calculator.skills.keys())}"
+
+    print(f"✅ 计算器智能体创建成功，支持技能: {list(calculator.skills.keys())}")
+    return calculator
+# 创建智能体
+calc_agent = create_calculator_agent()
+if calc_agent:
+    # 测试技能
+    print("\n🧪 测试智能体技能:")
+    test_queries = [
+        "获取信息",
+        "计算 10 + 5",
+        "计算 6 * 7"
+    ]
+    for query in test_queries:
+        if "信息" in query:
+            result = calc_agent.skills["info"](query)
+        elif "+" in query:
+            result = calc_agent.skills["add"](query)
+        elif "*" in query or "×" in query:
+            result = calc_agent.skills["multiply"](query)
+        else:
+            result = "未知查询类型"
+
+        print(f"  📝 查询: {query}")
+        print(f"  🤖 回复: {result}")
+        print()
+```
+
+A2A 请求生命周期是一个序列，详细说明了请求遵循的四个主要步骤：代理发现、身份验证、发送消息 API 和发送消息流 API。下图 10.8 借鉴了官网的流程图，用来展示了操作流程，说明了客户端、A2A 服务器和身份验证服务器之间的交互。
+
+`客户端 ↔ A2A 服务端：代理发现，获取 Agent 能力与地址`
+
+`客户端 ↔ 认证服务器：获取访问 Token`
+
+`客户端 → A2A 服务端：携带 Token 调用**单次消息 API**，同步获取结果`
+
+`客户端 → A2A 服务端：携带 Token 建立长连接调用**消息流 API**，分段接收输出`
+
+## 8.3 ANP 协议实战
+
+在 MCP 协议解决了工具调用、A2A 协议解决点对点智能体协作之后，ANP 协议则专注于解决大规模、开放网络环境下的智能体管理问题。
+
+当一个网络中存在大量功能各异的智能体（例如，自然语言处理、图像识别、数据分析等）时，系统会面临一系列挑战：
+
+- **服务发现**：当新任务到达时，如何快速找到能够处理该任务的智能体？
+- **智能路由**：如果多个智能体都能处理同一任务，如何选择最合适的一个（如根据负载、成本等）并向其分派任务？
+- **动态扩展**：如何让新加入网络的智能体被其他成员发现和调用？
+
+**1. 服务的发现与匹配：**首先，智能体 A 通过一个公开的发现服务，基于语义或功能描述进行查询，以定位到符合其任务需求的智能体 B。该发现服务通过预先爬取各智能体对外暴露的标准端点（`.well-known/agent-descriptions`）来建立索引，从而实现服务需求方与提供方的动态匹配。
+
+**2. 基于 DID 的身份验证：**在交互开始时，智能体 A 使用其私钥对包含自身 DID 的请求进行签名。智能体 B 收到后，通过解析该 DID 获取对应的公钥，并以此验证签名的真实性与请求的完整性，从而建立起双方的可信通信。
+
+**3. 标准化的服务执行：**身份验证通过后，智能体 B 响应请求，双方依据预定义的标准接口和数据格式进行数据交换或服务调用（如预订、查询等）。标准化的交互流程是实现跨平台、跨系统互操作性的基础。
+
+总而言之，该机制的核心是利用 DID 构建了一个去中心化的信任根基，并借助标准化的描述协议实现了服务的动态发现。这套方法使得智能体能够在无需中央协调的前提下，安全、高效地在互联网上形成协作网络。
+
+```python
+from hello_agents.protocols import ANPDiscovery, register_service
+from hello_agents import SimpleAgent, HelloAgentsLLM
+from hello_agents.tools.builtin import ANPTool
+import random
+from dotenv import load_dotenv
+
+load_dotenv()
+llm = HelloAgentsLLM()
+
+# 1. 创建服务发现中心
+discovery = ANPDiscovery()
+
+# 2. 注册多个计算节点
+for i in range(10):
+    register_service(
+        discovery=discovery,
+        service_id=f"compute_node_{i}",
+        service_name=f"计算节点{i}",
+        service_type="compute",
+        capabilities=["data_processing", "ml_training"],
+        endpoint=f"http://node{i}:8000",
+        metadata={
+            "load": random.uniform(0.1, 0.9),
+            "cpu_cores": random.choice([4, 8, 16]),
+            "memory_gb": random.choice([16, 32, 64]),
+            "gpu": random.choice([True, False])
+        }
+    )
+
+print(f"✅ 注册了 {len(discovery.list_all_services())} 个计算节点")
+
+# 3. 创建任务调度Agent
+scheduler = SimpleAgent(
+    name="任务调度器",
+    llm=llm,
+    system_prompt="""你是一个智能任务调度器，负责：
+1. 分析任务需求
+2. 选择最合适的计算节点
+3. 分配任务
+
+选择节点时考虑：负载、CPU核心数、内存、GPU等因素。"""
+)
+
+# 添加ANP工具
+anp_tool = ANPTool(
+    name="service_discovery",
+    description="服务发现工具，可以查找和选择计算节点",
+    discovery=discovery
+)
+scheduler.add_tool(anp_tool)
+
+# 4. 智能任务分配
+def assign_task(task_description):
+    print(f"\n任务：{task_description}")
+    print("=" * 50)
+
+    # 让Agent智能选择节点
+    response = scheduler.run(f"""
+    请为以下任务选择最合适的计算节点：
+    {task_description}
+
+    要求：
+    1. 列出所有可用节点
+    2. 分析每个节点的特点
+    3. 选择最合适的节点
+    4. 说明选择理由
+    """)
+
+    print(response)
+    print("=" * 50)
+
+# 测试不同类型的任务
+assign_task("训练一个大型深度学习模型，需要GPU支持")
+assign_task("处理大量文本数据，需要高内存")
+assign_task("运行轻量级数据分析任务")
+```
+
+# 9. Agentic-RL
+
+传统的监督学习方法存在三个核心局限:一是数据质量完全决定训练质量，模型只能模仿训练数据，难以超越;二是缺乏探索能力，只能被动学习人类提供的路径;三是难以优化长期目标，无法精确优化多步推理的中间过程。
+
+强化学习提供了新的可能性。通过让智能体自主生成多个候选答案并根据正确性获得奖励，它可以学习哪些推理路径更优、哪些步骤是关键，甚至发现比人类标注更好的解题方法[8]。这就是 Agentic RL 的核心思想:将 LLM 作为可学习策略，嵌入智能体的感知-决策-执行循环，通过强化学习优化多步任务表现。
+
+## 9.1**LLM 训练全景图**
+
+![image-20260630144919397](C:\Users\31461\AppData\Roaming\Typora\typora-user-images\image-20260630144919397.png)
+
+- **预训练阶段**是 LLM 训练的第一阶段，目标是让模型学习语言的基本规律和世界知识。这个阶段使用海量的文本数据(通常是数 TB 级别)，通过自监督学习的方式训练模型：训练信号来自文本本身，例如根据上文预测下一个词。
+- **后训练阶段**则是要解决预训练模型的不足。预训练后的模型虽然具备了强大的语言能力，但它只是一个"预测下一个词"的模型，并不知道如何遵循人类的指令、生成有帮助无害诚实的回答、拒绝不当的请求，以及以对话的方式与人交互。后训练阶段就是要解决这些问题，让模型对齐人类的偏好和价值观。
+  - **监督微调(SFT，Supervised Fine-Tuning)**[15]，目标是让模型学会遵循指令和对话格式。训练数据是(prompt， completion)(输入，期望输出)对，训练目标与预训练类似，仍然是最大化正确输出的概率:
+  - **奖励建模(RM)**。SFT 后的模型虽然能遵循指令，但生成的回答质量参差不齐。我们需要一种方式来评估回答的质量，这就是奖励模型的作用[13,14]。奖励模型的训练数据是偏好对比数据,包含同一个问题的两个回答,一个更好(chosen),一个更差(rejected)。奖励模型的训练目标是学习人类的偏好。输入是(提示，回答)对，输出是质量分数;$y_w$ 是更好的回答(chosen)，$y_l$ 是更差的回答(rejected)，$\sigma$ 是 sigmoid 函数，目标是让奖励模型给更好的回答更高的分数。
+  - **强化学习微调**。有了奖励模型后，我们就可以用强化学习来优化语言模型，让它生成更高质量的回答。![image-20260630145314059](C:\Users\31461\AppData\Roaming\Typora\typora-user-images\image-20260630145314059.png)
+
+**传统的后训练**(我们称之为 PBRFT: Preference-Based Reinforcement Fine-Tuning)主要关注单轮对话的质量优化:给定一个用户问题，模型生成一个回答，然后根据回答的质量获得奖励。这种方式适合优化对话助手，但对于需要多步推理、工具使用、长期规划的智能体任务来说，就显得力不从心了。
+
+**Agentic RL**则是一种新的范式，它将 LLM 视为一个可学习的策略，嵌入在一个顺序决策循环中。在这个框架下，智能体需要在动态环境中与外部世界交互，执行多步行动来完成复杂任务，获得中间反馈来指导后续决策，优化长期累积奖励而非单步奖励。
+
+- 在 PBRFT 场景中，用户问"请解释什么是强化学习"，模型生成完整回答，然后根据回答质量直接给分。而在 Agentic RL 场景中，用户请求"帮我分析这个 GitHub 仓库的代码质量"，智能体需要经历多个步骤:首先调用 GitHub API 获取仓库信息，成功获得仓库结构和文件列表，得到+0.1 的奖励;然后读取主要代码文件，成功获得代码内容，得到+0.1 的奖励;接着分析代码质量合理，得到+0.2 的奖励;最后生成分析报告质量高，得到+0.6 的奖励。总奖励是所有步骤的累积:1.0。
+
+![image-20260630152016080](C:\Users\31461\AppData\Roaming\Typora\typora-user-images\image-20260630152016080.png)
+
+## 9.2**自定义数据集和奖励函数**
+
+虽然 HelloAgents 提供了 GSM8K 数据集和常用奖励函数，但在实际应用中，你可能需要使用自己的数据集或设计特定的奖励函数。本节将介绍如何扩展框架。
+
+在使用自定义数据集之前，需要了解两种训练格式的数据要求:
+
+**SFT 格式**:用于监督微调，需要包含以下字段:
+
+- `prompt`: 输入提示(包含 system 和 user 消息)
+- `completion`: 期望的输出
+- `text`: 完整的对话文本(可选)
+
+**RL 格式**:用于强化学习，需要包含以下字段:
+
+- `question`: 原始问题
+- `prompt`: 输入提示(包含 system 和 user 消息)
+- `ground_truth`: 正确答案，客观结果
+- `full_answer`: 完整答案(包含推理过程)
+
+**SFT 的作用**是教会模型任务的基本规则。
+
+- 学习输出格式，让模型知道如何组织答案(如使用"Step 1"， "Final Answer"等标记)。
+- 学习推理模式，通过示例学习如何分解问题、逐步推导。
+- 建立基线能力，为后续的强化学习提供一个合理的起点。
+- 减少探索空间，强化学习不需要从零开始，可以在 SFT 的基础上优化。
+
+**在训练过程中，我们需要监控三个关键指标。**
+
+- 损失(Loss)应该逐渐下降，如果不下降可能是学习率太小或数据有问题，如果下降后又上升则可能是学习率太大或出现过拟合。
+- 梯度范数(Gradient Norm)应该在 0.1-10 的合理范围内，过大(>100)说明出现梯度爆炸需要降低学习率，过小(<0.01)说明梯度消失需要检查模型配置。
+- 学习率(Learning Rate)应该按照 warmup 策略变化，前 10%步数线性增加，然后线性衰减到 0。
+
+**训练中常见的问题及解决方案。**
+
+- 显存不足时可以减小 batch_size 或 max_length，使用梯度累积或更小的模型
+- 训练速度慢时可以增大 batch_size，减少 logging 频率，或使用混合精度训练
+- 损失不下降时可以增大学习率，检查数据格式，或增加训练轮数
+- 过拟合时可以增大 weight_decay（权重衰减，防止过拟合），减少训练轮数，或使用更多数据。
+
+**GRPO 训练过程解析**
+
+GRPO 的训练循环包括以下步骤:
+
+1. **采样阶段**:对于每个问题，使用当前策略生成多个答案(`num_generations`个)。这些答案构成一个"组"，用于计算相对奖励。
+2. **奖励计算**:对每个生成的答案计算奖励 ri。奖励可以是准确率、长度惩罚、步骤奖励或它们的组合。
+3. **相对奖励**:计算组内平均奖励 r¯=1N∑i=1Nri，然后计算相对奖励 r^i=ri−r¯。这样做的好处是减少奖励方差，使训练更稳定。
+4. **策略更新**:使用相对奖励更新策略，同时添加 KL 散度惩罚，防止策略偏离参考模型太远。
+5. **重复**:重复上述步骤，直到完成所有训练轮次。
+
+## 9.3模型评估与分析
+
+训练完成后，我们需要全面评估模型的性能，不仅要看准确率这一个指标，还要深入分析模型的推理质量、错误模式、泛化能力等。本节将介绍如何系统地评估和分析 Agentic RL 模型。
+
+**11.5.1 评估指标体系**
+
+一个好的评估体系应该是多维度的，从不同角度衡量模型的能力。我们将评估指标分为三类:准确性指标、效率指标、质量指标。
+
+**（1）准确性指标**
+
+**准确率(Accuracy)**。**Top-K 准确率**:生成 K 个答案，只要有一个正确就算对。。**数值误差(Numerical Error)**:对于数学问题，可以计算预测值与真实值的误差。
+
+**（2）效率指标**
+
+**平均长度(Average Length)**。**推理步骤数(Reasoning Steps)**:适当的步骤数(2-5 步)说明模型能够系统地分解问题，过多的步骤可能说明推理冗余。**推理时间(Inference Time)**:生成一个答案所需的时间。这个指标在实际部署中很重要，影响用户体验。
+
+**（3）质量指标**
+
+**格式正确率(Format Correctness)**。**推理连贯性(Reasoning Coherence)**:推理步骤之间是否逻辑连贯。这个指标通常需要人工评估或使用专门的评估模型。**可解释性(Explainability)**:答案是否容易理解和验证。包含清晰步骤的答案比直接给出结果的答案更具可解释性。
+
+**错误分析**模型的错误可以分为四类:
+
+- 计算错误(推理步骤正确但计算出错，如"48/2=25"，说明数值计算能力不足)、
+- 推理错误(推理逻辑错误导致解题思路不对，如先加后除而非先除后加，说明逻辑推理能力不足)、
+- 理解错误(没有正确理解问题，如问题问"总共"但只计算了一部分，说明语言理解能力不足)、
+- 格式错误(答案正确但格式不符合要求，如缺少"Final Answer:"标记，说明格式学习不足)。
+
+**数据增强**:如果数据量不足，可以考虑数据增强，如改写问题(保持答案不变)、生成相似问题、反向翻译(translate back)。但要注意保持数据质量，避免引入噪声。
+
+**超参网格搜索配置**
+
+- learning_rate：学习率
+- lora_rank：LoRA 低秩矩阵维度，控制微调可训练参数量，w=w+w'=w+BA
+- kl_coef：KL 散度损失权重（DPO/RLHF 类对齐训练常用）
+
+# 10. agent评估
+
+1. **BFCL**：评估工具调用能力
+   - 选择理由：数据集规模适中，评估指标清晰，社区活跃
+   - 适用场景：评估智能体的函数调用准确性
+2. **GAIA**：评估通用 AI 助手能力
+   - 选择理由：任务真实，难度分级，综合性强
+   - 适用场景：评估智能体的综合问题解决能力
+3. **数据生成质量评估**：评估 LLM 生成数据质量
+   - 选择理由：通过这个案例可以完整体验如何使用 Agent 创造数据，评估数据的完整演示。
+   - 适用场景：评估生成的训练数据、测试数据的质量
+   - 评估方法：LLM Judge、Win Rate、人工验证
+
+## 10.1 改进
+
+- 优化智能体的工具调用能力，可以考虑使用支持原生函数调用的 LLM（如 GPT-4、Claude 等），或者改进提示词让 LLM 更好地理解工具调用格式。
+- 扩展工具库，BFCL 测试中涉及各种类型的函数，可以根据测试数据集的特点，预先实现常用的工具类型，提高智能体的工具覆盖率。
+- 针对不同难度级别设计不同的策略，例如在 multiple 场景下需要智能体能够规划多步骤的工具调用序列，在 parallel 场景下需要识别可以并行执行的工具调用，在 irrelevance 场景下需要判断是否真的需要调用工具。
+
+**我们建立了一个三层评估体系，全面覆盖智能体的不同能力维度**。
+
+- 首先是工具调用能力评估（BFCL），专注于评估智能体的函数调用准确性，包含 simple、multiple、parallel、irrelevance 四个类别，使用 AST 匹配技术进行精确评估。
+- 其次是通用能力评估（GAIA），评估智能体的综合问题解决能力，包含三个难度级别共 466 个真实世界问题，关注多步推理、工具使用、文件处理等能力。
+- 第三是数据生成质量评估（AIME），评估 LLM 生成数据的质量，使用 LLM Judge 和 Win Rate 两种方法，支持人工验证和综合报告生成，确保生成数据达到参考数据的质量标准。

@@ -157,3 +157,164 @@ class Agent(ABC):
         return f"Agent(name={self.name}, provider={self.llm.provider})"
 ```
 
+`eval()` 函数会**把字符串当作 Python 代码执行**：
+
+- `proposal_str` 是一段合法 Python 语法的字符串（比如字典、列表、数字表达式）
+- `eval(proposal_str)` 将字符串转成对应 Python 对象，赋值给 `proposal`
+
+```
+print(__file__) 输出：
+D:/project/demo/test.py
+
+os.path.dirname("D:/project/demo/test.py")
+# 结果：D:/project/demo
+```
+
+```
+json 库解析函数：把 JSON 格式字符串转为 Python 字典 / 列表。
+③ json.loads(字符串)
+```
+
+| 内容                  | json.loads    | eval               |
+| --------------------- | ------------- | ------------------ |
+| `{"a":1}` 双引号      | ✅             | ✅                  |
+| `{'a':1}` 单引号      | ❌ 报错        | ✅                  |
+| `true / false / null` | ✅             | ❌（Python 不识别） |
+| `True / False / None` | ❌             | ✅                  |
+| `(1,2,3)` 元组        | ❌ JSON 无元组 | ✅                  |
+| 内置函数、系统调用    | ❌             | ✅（风险）          |
+
+## 一、多线程 threading（IO 密集首选，轻量）
+
+适合：天气接口请求、文件读取、网络爬虫、等待 API 响应
+
+优势：开销小、共享内存；缺陷：CPU 计算无法多核加速
+
+```
+import threading
+import time
+
+def task(name, delay):
+    print(f"线程{name}开始，等待{delay}s")
+    time.sleep(delay)  # IO阻塞时释放GIL
+    print(f"线程{name}结束")
+
+if __name__ == "__main__":
+    t1 = threading.Thread(target=task, args=("A", 2))
+    t2 = threading.Thread(target=task, args=("B", 1))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    print("全部完成")
+
+join() 会阻塞主线程：
+先 t1.join()：主线程卡住，直到线程 A 结束；
+再 t2.join()：主线程卡住，直到线程 B 结束；
+```
+
+**线程池（批量任务推荐，不用手动创建线程）**
+
+```
+from concurrent.futures import ThreadPoolExecutor
+
+def get_weather(city):
+    # 模拟请求天气API（IO等待）
+    import time
+    time.sleep(1)
+    return f"{city}天气数据"
+
+if __name__ == "__main__":
+    cities = ["北京", "上海", "广州", "深圳"]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = pool.map(get_weather, cities)
+    for res in results:
+        print(res)
+```
+
+## 二、多进程 multiprocessing（CPU 密集真并行）
+
+适合：数值计算、AST 批量对比、大规模数据处理、模型推理
+
+突破 GIL，多核同时运算；开销大、进程内存隔离，不能直接共享变量
+
+```
+import multiprocessing
+import time
+
+def calc_task(n):
+    # 纯CPU计算
+    s = 0
+    for i in range(n):
+        s += i**2
+    return s
+
+if __name__ == "__main__":
+    # Windows必须加if __name__ == "__main__"
+    p1 = multiprocessing.Process(target=calc_task, args=(1000000,))
+    p2 = multiprocessing.Process(target=calc_task, args=(1000000,))
+    p1.start()
+    p2.start()
+    p1.join()
+    p2.join()
+    print("计算完成")
+```
+
+**进程池 ProcessPoolExecutor（批量计算标准写法）**
+
+```
+from concurrent.futures import ProcessPoolExecutor
+
+def ast_match_task(sample):
+    # 批量AST匹配，CPU密集
+    pred, gold = sample
+    return pred == gold
+
+if __name__ == "__main__":
+    samples = [(1,1), (2,3), (5,5), (7,2)]
+    with ProcessPoolExecutor() as pool:
+        outputs = pool.map(ast_match_task, samples)
+    print(list(outputs))
+```
+
+## 三、异步并发 asyncio（高 IO、大量接口并发）
+
+适合：成千上百 HTTP 请求、MCP 客户端异步调用、大量网络任务
+
+单线程内切换 IO 任务，比线程池更省资源
+
+```
+import asyncio
+
+async def async_weather(city):
+    print(f"请求{city}")
+    await asyncio.sleep(1)  # 异步等待IO
+    return f"{city}数据"
+
+async def main():
+    cities = ["北京", "上海", "杭州"]
+    # 并发创建多个协程
+    tasks = [async_weather(city) for city in cities]
+    results = await asyncio.gather(*tasks)
+    print(results)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+## 四、第三方库 joblib（极简多进程，机器学习常用）
+
+封装 multiprocessing，一行实现并行循环，不用写进程池模板
+
+```
+from joblib import Parallel, delayed
+
+def heavy_calc(x):
+    return x ** 3
+
+# n_jobs=-1 使用全部CPU核心
+results = Parallel(n_jobs=-1)(
+    delayed(heavy_calc)(i) for i in range(10)
+)
+print(results)
+```
