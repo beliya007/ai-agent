@@ -1073,6 +1073,208 @@ async with github_client:
 # OpenAI、Claude、Llama等都使用相同的MCP客户端
 ```
 
+```
+# 用户代码
+fs_tool = MCPTool(name="fs", server_command=[...])
+agent.add_tool(fs_tool)
+
+# 内部发生的事情：
+# 1. MCPTool连接到服务器，发现14个工具
+# 2. 为每个工具创建包装器：
+#    - fs_read_text_file (参数: path, tail, head)
+#    - fs_write_file (参数: path, content)
+#    - ...
+# 3. 注册到Agent的工具注册表
+
+# Agent调用
+response = agent.run("读取README.md")
+
+# Agent内部：
+# 1. 识别需要调用 fs_read_text_file
+# 2. 生成参数：path=README.md
+# 3. 包装器转换为MCP格式：
+#    {"action": "call_tool", "tool_name": "read_text_file", "arguments": {"path": "README.md"}}
+# 4. 调用MCP服务器
+# 5. 返回文件内容
+```
+
+```python
+class MCPTool(Tool):
+    """MCP (Model Context Protocol) 工具
+
+    连接到 MCP 服务器并调用其提供的工具、资源和提示词。
+    
+    功能：
+    - 列出服务器提供的工具
+    - 调用服务器工具
+    - 读取服务器资源
+    - 获取提示词模板
+
+    """
+    
+    def __init__(self,
+                 name: str = "mcp",
+                 description: Optional[str] = None,
+                 server_command: Optional[List[str]] = None,
+                 server_args: Optional[List[str]] = None,
+                 server: Optional[Any] = None,
+                 auto_expand: bool = True,
+                 env: Optional[Dict[str, str]] = None,
+                 env_keys: Optional[List[str]] = None):
+        """
+        初始化 MCP 工具
+
+        Args:
+            name: 工具名称（默认为"mcp"，建议为不同服务器指定不同名称）
+            description: 工具描述（可选，默认为通用描述）
+            server_command: 服务器启动命令（如 ["python", "server.py"]）
+            server_args: 服务器参数列表
+            server: FastMCP 服务器实例（可选，用于内存传输）
+            auto_expand: 是否自动展开为独立工具（默认True）
+            env: 环境变量字典（优先级最高，直接传递给MCP服务器）
+            env_keys: 要从系统环境变量加载的key列表（优先级中等）
+
+        环境变量优先级（从高到低）：
+            1. 直接传递的env参数
+            2. env_keys指定的环境变量
+            3. 自动检测的环境变量（根据server_command）
+
+        注意：如果所有参数都为空，将创建内置演示服务器
+        """
+
+    def run(self, parameters: Dict[str, Any]) -> str:
+        """
+        执行 MCP 操作
+
+        Args:
+            parameters: 包含以下参数的字典
+                - action: 操作类型 (list_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt)
+                  如果不指定action但指定了tool_name，会自动推断为call_tool
+                - tool_name: 工具名称（call_tool 需要）
+                - arguments: 工具参数（call_tool 需要）
+                - uri: 资源 URI（read_resource 需要）
+                - prompt_name: 提示词名称（get_prompt 需要）
+                - prompt_arguments: 提示词参数（get_prompt 可选）
+
+        Returns:
+            操作结果
+        """
+        from hello_agents.protocols.mcp.client import MCPClient
+
+        # 智能推断action：如果没有action但有tool_name，自动设置为call_tool
+        action = parameters.get("action", "").lower()
+        if not action and "tool_name" in parameters:
+            action = "call_tool"
+            parameters["action"] = action
+
+        if not action:
+            return "错误：必须指定 action 参数或 tool_name 参数"
+        
+        try:
+            # 使用增强的异步客户端
+            import asyncio
+            from hello_agents.protocols.mcp.client import MCPClient
+
+            async def run_mcp_operation():
+                # 根据配置选择客户端创建方式
+                if self.server:
+                    # 使用内置服务器（内存传输）
+                    client_source = self.server
+                else:
+                    # 使用外部服务器命令
+                    client_source = self.server_command
+
+                async with MCPClient(client_source, self.server_args, env=self.env) as client:
+                    if action == "list_tools":
+                        tools = await client.list_tools()
+                        if not tools:
+                            return "没有找到可用的工具"
+                        result = f"找到 {len(tools)} 个工具:\n"
+                        for tool in tools:
+                            result += f"- {tool['name']}: {tool['description']}\n"
+                        return result
+
+                    elif action == "call_tool":
+                        tool_name = parameters.get("tool_name")
+                        arguments = parameters.get("arguments", {})
+                        if not tool_name:
+                            return "错误：必须指定 tool_name 参数"
+                        result = await client.call_tool(tool_name, arguments)
+                        return f"工具 '{tool_name}' 执行结果:\n{result}"
+
+                    elif action == "list_resources":
+                        resources = await client.list_resources()
+                        if not resources:
+                            return "没有找到可用的资源"
+                        result = f"找到 {len(resources)} 个资源:\n"
+                        for resource in resources:
+                            result += f"- {resource['uri']}: {resource['name']}\n"
+                        return result
+
+                    elif action == "read_resource":
+                        uri = parameters.get("uri")
+                        if not uri:
+                            return "错误：必须指定 uri 参数"
+                        content = await client.read_resource(uri)
+                        return f"资源 '{uri}' 内容:\n{content}"
+
+                    elif action == "list_prompts":
+                        prompts = await client.list_prompts()
+                        if not prompts:
+                            return "没有找到可用的提示词"
+                        result = f"找到 {len(prompts)} 个提示词:\n"
+                        for prompt in prompts:
+                            result += f"- {prompt['name']}: {prompt['description']}\n"
+                        return result
+
+                    elif action == "get_prompt":
+                        prompt_name = parameters.get("prompt_name")
+                        prompt_arguments = parameters.get("prompt_arguments", {})
+                        if not prompt_name:
+                            return "错误：必须指定 prompt_name 参数"
+                        messages = await client.get_prompt(prompt_name, prompt_arguments)
+                        result = f"提示词 '{prompt_name}':\n"
+                        for msg in messages:
+                            result += f"[{msg['role']}] {msg['content']}\n"
+                        return result
+
+                    else:
+                        return f"错误：不支持的操作 '{action}'"
+
+# 运行异步操作asyncio 循环线程隔离
+#一个线程只能拥有一个正在运行的事件循环，主线程有循环时，主线程内部不能再开新循环；只能新建线程，每个线程持有自己独立 loop。
+            try:
+                # 检查是否已有运行中的事件循环
+                try:
+                    loop = asyncio.get_running_loop()
+                    # 如果有运行中的循环，在新线程中运行新的事件循环
+                    import concurrent.futures
+                    import threading
+
+                    def run_in_thread():
+                        # 在新线程中创建新的事件循环
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            return new_loop.run_until_complete(run_mcp_operation())
+                        finally:
+                            new_loop.close()
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(run_in_thread)
+                        return future.result()
+                except RuntimeError:
+                    # 没有运行中的循环，直接运行
+                    return asyncio.run(run_mcp_operation())
+            except Exception as e:
+                return f"异步操作失败: {str(e)}"
+                    
+        except Exception as e:
+            return f"MCP 操作失败: {str(e)}"
+```
+
+
+
 ## 8.2 A2A
 
 MCP 协议解决了智能体与工具的交互，而 A2A 协议则解决智能体之间的协作问题。在一个需要多智能体（如研究员、撰写员、编辑）协作的任务中，它们需要通信、委托任务、协商能力和同步状态。
@@ -1396,3 +1598,128 @@ GRPO 的训练循环包括以下步骤:
 - 首先是工具调用能力评估（BFCL），专注于评估智能体的函数调用准确性，包含 simple、multiple、parallel、irrelevance 四个类别，使用 AST 匹配技术进行精确评估。
 - 其次是通用能力评估（GAIA），评估智能体的综合问题解决能力，包含三个难度级别共 466 个真实世界问题，关注多步推理、工具使用、文件处理等能力。
 - 第三是数据生成质量评估（AIME），评估 LLM 生成数据的质量，使用 LLM Judge 和 Win Rate 两种方法，支持人工验证和综合报告生成，确保生成数据达到参考数据的质量标准。
+
+# 11项目
+
+## 11.1 SSE
+
+SSE 是一种服务器推送技术，允许服务器主动向客户端发送数据，在协议章节也有所讲解。
+
+**流程说明**：
+
+1. **客户端发起请求**：发送 POST 请求到`/api/research`，包含研究主题
+2. **服务器建立 SSE 连接**：返回`text/event-stream`响应
+3. **服务器推送进度**：定期推送研究进度（规划、执行、报告）
+4. **客户端接收进度**：监听 SSE 事件，更新 UI
+5. **研究完成**：服务器推送最终报告，关闭连接
+
+**后端**
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from typing import AsyncGenerator
+import asyncio
+import json
+app = FastAPI()
+
+async def research_stream(topic: str) -> AsyncGenerator[str, None]:
+    """研究流式生成器  
+    生成SSE格式的数据：
+    data: {"type": "progress", "data": {...}}
+    """
+    try:
+        # 1. 规划阶段
+        yield f"data: {json.dumps({'type': 'progress', 'stage': 'planning', 'percentage': 10, 'text': '正在规划研究任务...'})}\n\n"
+        
+        # 调用PlanningService
+        todo_items = await planning_service.plan_todo_list(topic)
+        
+        yield f"data: {json.dumps({'type': 'plan', 'data': [item.dict() for item in todo_items]})}\n\n"
+        
+        # 2. 执行阶段
+        task_summaries = []
+        # 完成
+        yield f"data: {json.dumps({'type': 'progress', 'stage': 'completed', 'percentage': 100, 'text': '研究完成！'})}\n\n"
+        
+    except Exception as e:
+        # 错误处理
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+@app.post("/api/research")
+async def research(request: ResearchRequest):
+    """研究端点（SSE）"""
+    return StreamingResponse(
+        research_stream(request.topic),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )
+```
+
+**前端**
+
+```javascript
+// composables/useResearch.ts
+import { ref } from 'vue'
+export function useResearch() {
+  const startResearch = (topic: string) => {
+    // 创建EventSource
+    const eventSource = new EventSource(`/api/research?topic=${encodeURIComponent(topic)}`)
+    // 监听消息
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data)
+      switch (data.type) {
+        case 'progress':
+          progressPercentage.value = data.percentage
+          progressText.value = data.text
+          break
+        case 'plan':
+          // 显示规划结果
+          console.log('规划结果:', data.data)
+          break
+        case 'completed':
+          eventSource.close()
+          isLoading.value = false
+          break
+      }
+    }
+    // 错误处理
+    eventSource.onerror = (err) => {
+      console.error('SSE错误:', err)
+      error.value = '连接失败，请重试'
+      eventSource.close()
+      isLoading.value = false
+    }
+  }
+  
+  return {
+    isLoading,
+    progressPercentage,
+    progressText,
+    markdownContent,
+    error,
+    startResearch,
+  }
+}
+```
+
+渲染**markdow**：
+
+研究结果以 Markdown 格式展示，包含标题、段落、列表、引用等元素。我们使用`marked`库将 Markdown 转换为 HTML，并添加自定义样式。
+
+```javascript
+import { marked } from 'marked'
+
+// 配置marked
+marked.setOptions({
+  breaks: true,  // 支持换行
+  gfm: true,     // 支持GitHub Flavored Markdown
+})
+
+// 渲染
+const renderedHtml = marked(markdownContent.value)
+```
+

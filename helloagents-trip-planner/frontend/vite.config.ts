@@ -4,6 +4,8 @@ import { resolve } from 'path'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Load .env files from workspace root: d:/桌面/agent
+  envDir: resolve(__dirname, '../../'),
   plugins: [vue()],
   resolve: {
     alias: {

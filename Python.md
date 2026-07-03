@@ -157,6 +157,8 @@ class Agent(ABC):
         return f"Agent(name={self.name}, provider={self.llm.provider})"
 ```
 
+# json
+
 `eval()` 函数会**把字符串当作 Python 代码执行**：
 
 - `proposal_str` 是一段合法 Python 语法的字符串（比如字典、列表、数字表达式）
@@ -184,7 +186,21 @@ json 库解析函数：把 JSON 格式字符串转为 Python 字典 / 列表。
 | `(1,2,3)` 元组        | ❌ JSON 无元组 | ✅                  |
 | 内置函数、系统调用    | ❌             | ✅（风险）          |
 
-## 一、多线程 threading（IO 密集首选，轻量）
+`json.dumps(obj)`：**把 Python 对象（字典 / 列表等）序列化为 JSON 字符串**
+
+对应反向函数：`json.loads(json_str)` 字符串 → Python 对象
+
+```python
+d = {"text": "研究完成"}
+print(json.dumps(d))
+# {"text": "\u7814\u7a76\u5b8c\u6210"}
+```
+
+
+
+## 一、多线程
+
+ **threading（IO 密集首选，轻量）**
 
 适合：天气接口请求、文件读取、网络爬虫、等待 API 响应
 
@@ -232,7 +248,9 @@ if __name__ == "__main__":
         print(res)
 ```
 
-## 二、多进程 multiprocessing（CPU 密集真并行）
+## 二、多进程 
+
+**multiprocessing（CPU 密集真并行）**
 
 适合：数值计算、AST 批量对比、大规模数据处理、模型推理
 
@@ -277,7 +295,9 @@ if __name__ == "__main__":
     print(list(outputs))
 ```
 
-## 三、异步并发 asyncio（高 IO、大量接口并发）
+## 三、异步并发
+
+ **asyncio（高 IO、大量接口并发）**
 
 适合：成千上百 HTTP 请求、MCP 客户端异步调用、大量网络任务
 
@@ -302,7 +322,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## 四、第三方库 joblib（极简多进程，机器学习常用）
+## 四、第三方库
+
+ **joblib（极简多进程，机器学习常用）**
 
 封装 multiprocessing，一行实现并行循环，不用写进程池模板
 
@@ -318,3 +340,54 @@ results = Parallel(n_jobs=-1)(
 )
 print(results)
 ```
+
+```
+city = "北京"
+# 多行三引号 f-string
+prompt = f""""
+你是天气专家，查询{city}的天气
+工具格式：`[TOOL_CALL:amap_maps_weather:city={city}]`
+"""
+"""
+print(prompt)
+
+# 先定义模板，用 {city} 占位，此时不需要 city 存在
+WEATHER_PROMPT = """查询{city}的天气，出行天数{days}"""
+
+# 后期再传参填充
+text = WEATHER_PROMPT.format(city="上海", days=3)
+print(text)
+```
+
+# 类型
+
+```python
+from pydantic import BaseModel
+from typing import int, str
+
+class TodoItem(BaseModel):
+    id: int
+    title: str
+    intent: str
+    query: str
+task = TodoItem(id=1, title="查天气", intent="天气查询", query="上海今天多少度")
+print(task.model_dump())
+# {'id': 1, 'title': '查天气', 'intent': '天气查询', 'query': '上海今天多少度'}
+
+class TodoItem(BaseModel):
+    # 必填：创建对象必须传id
+    id: int = Field(..., gt=0, description="任务自增ID，从1开始")
+    # 必填
+    query: str = Field(..., min_length=1, description="用户原始查询语句")
+    # 可选，不传默认1
+    priority: int = Field(default=1, ge=1, le=5, description="优先级1~5")
+    //desc: Optional[str] = Field(None, description="可选描述，可以为空")
+```
+
+`ge` = greater or equal → **大于等于 ≥**
+
+`le` = less or equal → **小于等于 ≤**
+
+`gt` = greater than → 大于 >
+
+`lt` = less than → 小于
