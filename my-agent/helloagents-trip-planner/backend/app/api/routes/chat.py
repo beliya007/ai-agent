@@ -1,6 +1,5 @@
 """聊天API路由"""
 
-import asyncio
 import json
 from typing import AsyncGenerator
 
@@ -44,13 +43,9 @@ async def stream_chat(request: ChatRequest):
             yield _to_sse("start", {"message": "正在思考..."})
 
             agent = get_chat_agent()
-            answer = agent.ask(user_message)
-
-            # 将完整答案分块推送为流式增量
-            chunk_size = 8
-            for i in range(0, len(answer), chunk_size):
-                yield _to_sse("chunk", {"content": answer[i : i + chunk_size]})
-                await asyncio.sleep(0.015)
+            for chunk in agent.stream_ask(user_message):
+                if chunk:
+                    yield _to_sse("chunk", {"content": chunk})
 
             yield _to_sse("done", {"message": "完成"})
         except Exception as e:
