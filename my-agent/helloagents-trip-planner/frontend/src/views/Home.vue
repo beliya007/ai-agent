@@ -10,13 +10,19 @@
     <!-- 页面标题 -->
     <div class="page-header">
       <div class="icon-wrapper">
-        <span class="icon">✈️</span>
+        <span class="icon">🤖</span>
       </div>
-      <h1 class="page-title">智能旅行助手</h1>
-      <p class="page-subtitle">基于AI的个性化旅行规划,让每一次出行都完美无忧</p>
+      <h1 class="page-title">我的Agent管家</h1>
+      <p class="page-subtitle">统一管理你的智能助手,快速切换并启动不同任务</p>
     </div>
 
-    <a-card class="form-card" :bordered="false">
+    <el-tabs v-model="activeAgentTab" class="agent-tabs" stretch>
+      <el-tab-pane label="我的Agent管家" name="trip" />
+      <el-tab-pane label="我的Agent模板一" name="agent-template-1" />
+      <el-tab-pane label="我的Agent模板二" name="agent-template-2" />
+    </el-tabs>
+
+    <a-card v-if="activeAgentTab === 'trip'" class="form-card" :bordered="false">
       <a-form
         :model="formData"
         layout="vertical"
@@ -200,6 +206,10 @@
         </a-form-item>
       </a-form>
     </a-card>
+
+    <a-card v-else class="form-card placeholder-card" :bordered="false">
+      <el-empty description="这里先预留为你的其他 Agent 模板区域" />
+    </a-card>
   </div>
 </template>
 
@@ -211,12 +221,18 @@ import { generateTripPlan } from '@/services/api'
 import type { TripFormData } from '@/types'
 import type { Dayjs } from 'dayjs'
 
+type HomeFormData = Omit<TripFormData, 'start_date' | 'end_date'> & {
+  start_date: Dayjs | null
+  end_date: Dayjs | null
+}
+
 const router = useRouter()
+const activeAgentTab = ref('trip')
 const loading = ref(false)
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
 
-const formData = reactive<TripFormData & { start_date: Dayjs | null; end_date: Dayjs | null }>({
+const formData = reactive<HomeFormData>({
   city: '',
   start_date: null,
   end_date: null,
@@ -430,6 +446,46 @@ const handleSubmit = async () => {
   z-index: 1;
   backdrop-filter: blur(10px);
   background: rgba(255, 255, 255, 0.98) !important;
+}
+
+.agent-tabs {
+  max-width: 1400px;
+  margin: 0 auto 20px;
+  position: relative;
+  z-index: 1;
+}
+
+.agent-tabs :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+
+.agent-tabs :deep(.el-tabs__nav-wrap) {
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 4px;
+}
+
+.agent-tabs :deep(.el-tabs__item) {
+  color: #34495e;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.agent-tabs :deep(.el-tabs__item.is-active) {
+  color: #3a5cca;
+}
+
+.agent-tabs :deep(.el-tabs__active-bar) {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+}
+
+.placeholder-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 420px;
 }
 
 /* 表单分区 */

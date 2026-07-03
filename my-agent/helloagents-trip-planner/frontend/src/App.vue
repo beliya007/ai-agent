@@ -1,18 +1,18 @@
 <template>
   <div id="app">
-    <a-layout style="min-height: 100vh">
-      <a-layout-header style="background: #001529; padding: 0 50px">
-        <div style="color: white; font-size: 24px; font-weight: bold">
-          🌍 HelloAgents智能旅行助手
+    <el-container style="min-height: 100vh">
+      <el-header style="background: #001529; padding: 0 50px; display: flex; align-items: center;">
+        <div style="color: white; font-size: 24px; font-weight: bold;">
+          🤖 HelloAgents我的Agent管家
         </div>
-      </a-layout-header>
-      <a-layout-content style="padding: 24px">
+      </el-header>
+      <el-main style="padding: 24px">
         <router-view />
-      </a-layout-content>
-      <a-layout-footer style="text-align: center">
-        HelloAgents智能旅行助手 ©2025 基于HelloAgents框架
-      </a-layout-footer>
-    </a-layout>
+      </el-main>
+      <el-footer style="text-align: center">
+        HelloAgents我的Agent管家 ©2025 基于HelloAgents框架
+      </el-footer>
+    </el-container>
   </div>
 </template>
 
