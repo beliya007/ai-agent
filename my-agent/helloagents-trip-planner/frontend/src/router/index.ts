@@ -31,8 +31,8 @@ const router = createRouter({
           component: ChatAgentPanel
         },
         {
-          path: 'template-2',
-          name: 'AgentTemplateTwo',
+          path: 'article',
+          name: 'ArticleAgent',
           component: AgentTemplateTwo
         }
       ]

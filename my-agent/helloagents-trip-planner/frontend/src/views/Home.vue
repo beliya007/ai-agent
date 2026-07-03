@@ -10,7 +10,7 @@
     <el-tabs v-model="activeAgentTab" class="agent-tabs" stretch>
       <el-tab-pane label="我的旅游Agent" name="travel" />
       <el-tab-pane label="我的聊天Agent" name="chat" />
-      <el-tab-pane label="我的Agent模板二" name="template-2" />
+      <el-tab-pane label="我的文章Agent" name="article" />
     </el-tabs>
 
     <router-view />
@@ -27,13 +27,13 @@ const router = useRouter()
 const tabToRoute: Record<string, string> = {
   travel: '/agents/travel',
   chat: '/agents/chat',
-  'template-2': '/agents/template-2'
+  article: '/agents/article',
 }
 
 const routeToTab: Record<string, string> = {
   '/agents/travel': 'travel',
   '/agents/chat': 'chat',
-  '/agents/template-2': 'template-2'
+  '/agents/article': 'article'
 }
 
 const activeAgentTab = computed({

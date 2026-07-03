@@ -9,9 +9,9 @@
       <el-main style="padding: 0">
         <router-view />
       </el-main>
-      <el-footer style="text-align: center">
+      <!-- <el-footer style="text-align: center">
         HelloAgents我的Agent管家 ©2025 基于HelloAgents框架
-      </el-footer>
+      </el-footer> -->
     </el-container>
   </div>
 </template>
