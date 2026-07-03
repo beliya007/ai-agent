@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from ...agents.chat import get_chat_agent
+from ...agents.chat_agent import get_chat_agent
 
 router = APIRouter(prefix="/chat", tags=["聊天助手"])
 
