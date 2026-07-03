@@ -6,7 +6,7 @@
           🤖 HelloAgents我的Agent管家
         </div>
       </el-header>
-      <el-main style="padding: 24px">
+      <el-main style="padding: 0">
         <router-view />
       </el-main>
       <el-footer style="text-align: center">
