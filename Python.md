@@ -190,7 +190,7 @@ json 库解析函数：把 JSON 格式字符串转为 Python 字典 / 列表。
 
 对应反向函数：`json.loads(json_str)` 字符串 → Python 对象
 
-```python
+```
 d = {"text": "研究完成"}
 print(json.dumps(d))
 # {"text": "\u7814\u7a76\u5b8c\u6210"}

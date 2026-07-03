@@ -58,6 +58,255 @@ Reflection 机制的核心思想，正是为智能体引入一种**事后（post
 
 ![image-20260621210659680](C:\Users\31461\AppData\Roaming\Typora\typora-user-images\image-20260621210659680.png)
 
+## 1.4 SimpleAge----------------
+
+### 1.4.1子agent
+
+```python
+            # 创建景点搜索Agent
+            print("  - 创建景点搜索Agent...")
+            self.attraction_agent = SimpleAgent(
+                name="景点搜索专家",
+                llm=self.llm,
+                system_prompt=ATTRACTION_AGENT_PROMPT
+            )
+            self.attraction_agent.add_tool(self.amap_tool)
+            #查看工具列表
+            print(f"   景点搜索Agent: {len(self.attraction_agent.list_tools())} 个工具")
+            #根据请求参数构建字符串请求agent
+            attraction_query = self._build_attraction_query(request)
+            #执行agent的run
+            attraction_response = self.attraction_agent.run(attraction_query)
+```
+
+```python
+    def run(self, input_text: str, max_tool_iterations: int = 3, **kwargs) -> str:
+        """
+        运行SimpleAgent，支持可选的工具调用
+        """
+        messages = []
+        # 添加系统消息（可能包含工具信息）
+        enhanced_system_prompt = self._get_enhanced_system_prompt()
+        messages.append({"role": "system", "content": enhanced_system_prompt})
+        # 添加历史消息
+        for msg in self._history:
+            messages.append({"role": msg.role, "content": msg.content})
+        # 添加当前用户消息
+        messages.append({"role": "user", "content": input_text})
+        
+        # 如果没有启用工具调用，使用原有逻辑
+        if not self.enable_tool_calling:
+            response = self.llm.invoke(messages, **kwargs)
+            self.add_message(Message(input_text, "user"))
+            self.add_message(Message(response, "assistant"))
+            return response
+        # 迭代处理，支持多轮工具调用
+        current_iteration = 0
+        final_response = ""
+
+        while current_iteration < max_tool_iterations:
+            # 调用LLM
+            response = self.llm.invoke(messages, **kwargs)
+            # 检查是否有工具调用，并解析出调用格式
+            tool_calls = self._parse_tool_calls(response)
+            if tool_calls:
+                # 执行所有工具调用并收集结果
+                tool_results = []
+                clean_response = response
+
+                for call in tool_calls:
+                    result = self._execute_tool_call(call['tool_name'], call['parameters'])
+                    tool_results.append(result)
+                    # 从响应中移除工具调用标记
+                    clean_response = clean_response.replace(call['original'], "")
+                # 构建包含工具结果的消息
+                messages.append({"role": "assistant", "content": clean_response})
+                # 添加工具结果
+                tool_results_text = "\n\n".join(tool_results)
+                messages.append({"role": "user", "content": f"工具执行结果：\n{tool_results_text}\n\n请基于这些结果给出完整的回答。"})
+
+                current_iteration += 1
+                continue
+            # 没有工具调用，这是最终回答
+            final_response = response
+            break
+        # 如果超过最大迭代次数，获取最后一次回答
+        if current_iteration >= max_tool_iterations and not final_response:
+            final_response = self.llm.invoke(messages, **kwargs)
+        # 保存到历史记录
+        self.add_message(Message(input_text, "user"))
+        self.add_message(Message(final_response, "assistant"))
+        return final_response
+```
+
+### 1.4.2 tool
+
+**工具格式**
+
+```python
+        self._tools: dict[str, Tool] = {}
+        self._functions: dict[str, dict[str, Any]] = {}
+        self._functions[name] = {
+            "description": description,
+            "func": func
+        }
+```
+
+**增加工具**
+
+```python
+    def add_tool(self, tool, auto_expand: bool = True) -> None:
+        """
+        如果工具是可展开的（expandable=True），会自动展开为多个独立工具
+        """
+        if not self.tool_registry:
+            from ..tools.registry import ToolRegistry
+            self.tool_registry = ToolRegistry()
+            self.enable_tool_calling = True
+        self.tool_registry.register_tool(tool, auto_expand=auto_expand)
+```
+
+**注册工具**
+
+```python
+    def register_tool(self, tool: Tool, auto_expand: bool = True):
+        if auto_expand and hasattr(tool, 'expandable') and tool.expandable:
+            expanded_tools = tool.get_expanded_tools()
+            if expanded_tools:
+                for sub_tool in expanded_tools:
+                    if sub_tool.name in self._tools:
+                    self._tools[sub_tool.name] = sub_tool
+                return
+        self._tools[tool.name] = tool
+```
+
+**查看工具**
+
+```python
+    def list_tools(self) -> list[str]:
+        """列出所有工具名称"""
+        return list(self._tools.keys()) + list(self._functions.keys())
+```
+
+**查看工具描述**
+
+```python
+    def get_tools_description(self) -> str:
+        descriptions = []
+        # Tool对象描述
+        for tool in self._tools.values():
+            descriptions.append(f"- {tool.name}: {tool.description}")
+        # 函数工具描述
+        for name, info in self._functions.items():
+            descriptions.append(f"- {name}: {info['description']}")
+        return "\n".join(descriptions) if descriptions else "暂无可用工具"
+```
+
+#### 1.4.2.1 MCPTool
+
+**使用**
+
+```python
+            # 创建共享的MCP工具(只创建一次)
+            print("  - 创建共享MCP工具...")
+            self.amap_tool = MCPTool(
+                name="amap",
+                description="高德地图服务",
+                server_command=["uvx", "amap-mcp-server"],
+                env={"AMAP_MAPS_API_KEY": settings.amap_api_key},
+                auto_expand=True
+            )
+```
+
+**内部TOOL的run方法**
+
+```python
+    def run(self, parameters: Dict[str, Any]) -> str:
+        """
+        执行 MCP 操作
+        Args:
+            parameters: 包含以下参数的字典
+                - action: 操作类型 (list_tools, call_tool, list_resources, read_resource, list_prompts, get_prompt)
+                  如果不指定action但指定了tool_name，会自动推断为call_tool
+                - tool_name: 工具名称（call_tool 需要）
+                - arguments: 工具参数（call_tool 需要）
+                - uri: 资源 URI（read_resource 需要）
+                - prompt_name: 提示词名称（get_prompt 需要）
+                - prompt_arguments: 提示词参数（get_prompt 可选）
+        Returns:
+            操作结果
+        """
+        from hello_agents.protocols.mcp.client import MCPClient
+        # 智能推断action：如果没有action但有tool_name，自动设置为call_tool
+        try:
+            # 使用增强的异步客户端
+                async with MCPClient(client_source, self.server_args, env=self.env) as client:
+                    if action == "list_tools":
+                        tools = await client.list_tools()
+                        if not tools:
+                            return "没有找到可用的工具"
+                        result = f"找到 {len(tools)} 个工具:\n"
+                        for tool in tools:
+                            result += f"- {tool['name']}: {tool['description']}\n"
+                        return result
+                    elif action == "call_tool":
+                        tool_name = parameters.get("tool_name")
+                        arguments = parameters.get("arguments", {})
+                        if not tool_name:
+                            return "错误：必须指定 tool_name 参数"
+                        result = await client.call_tool(tool_name, arguments)
+                        return f"工具 '{tool_name}' 执行结果:\n{result}"
+```
+
+**实际mcpclient**
+
+```python
+from hello_agents.protocols import MCPClient
+
+# 步骤1：连接到社区提供的MCP服务器（无需自己实现）
+github_client = MCPClient([
+    "npx", "-y", "@modelcontextprotocol/server-github"
+])
+# 步骤2：统一的调用方式（与模型无关）
+async with github_client:
+    tools = await github_client.list_tools()
+    # 调用工具（标准化接口）
+    result = await github_client.call_tool(
+        "search_repositories",
+        {"query": "AI agents"}
+    )
+# 步骤3：任何支持MCP的模型都能使用
+# OpenAI、Claude、Llama等都使用相同的MCP客户端
+```
+
+·
+
+### 1.4.3 系统提示词
+
+```python
+    def _get_enhanced_system_prompt(self) -> str:
+        """构建增强的系统提示词，包含工具信息"""
+        base_prompt = self.system_prompt or "你是一个有用的AI助手。"
+        #是否有工具
+        if not self.enable_tool_calling or not self.tool_registry:
+            return base_prompt
+        #是否获取工具描述
+        tools_description = self.tool_registry.get_tools_description()
+        if not tools_description or tools_description == "暂无可用工具":
+            return base_prompt
+        #获取工具
+        tools_section = "\n\n## 可用工具\n"
+        tools_section += "你可以使用以下工具来帮助回答问题：\n"
+        tools_section += tools_description + "\n"
+        tools_section += "\n## 工具调用格式\n"
+        tools_section += "当需要使用工具时，请使用以下格式：\n"
+        tools_section += "`[TOOL_CALL:{tool_name}:{parameters}]`\n\n"
+        return base_prompt + tools_section
+   
+```
+
+
+
 # 2 低代码
 
 ## 2.1 n8n 的节点与工作流
