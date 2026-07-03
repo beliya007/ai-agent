@@ -1,122 +1,102 @@
-"""POI相关API路由"""
+"""文章相关API路由"""
 
-from fastapi import APIRouter, HTTPException
+import json
+from typing import AsyncGenerator
+
+from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from typing import List, Optional
-from ...services.amap_service import get_amap_service
-from ...services.unsplash_service import get_unsplash_service
 
-router = APIRouter(prefix="/poi", tags=["POI"])
+from ...agents.article_agent import get_article_agent
 
-
-class POIDetailResponse(BaseModel):
-    """POI详情响应"""
-    success: bool
-    message: str
-    data: Optional[dict] = None
+router = APIRouter(prefix="/article", tags=["文章Agent"])
 
 
-@router.get(
-    "/detail/{poi_id}",
-    response_model=POIDetailResponse,
-    summary="获取POI详情",
-    description="根据POI ID获取详细信息,包括图片"
-)
-async def get_poi_detail(poi_id: str):
-    """
-    获取POI详情
-    
-    Args:
-        poi_id: POI ID
-        
-    Returns:
-        POI详情响应
-    """
-    try:
-        amap_service = get_amap_service()
-        
-        # 调用高德地图POI详情API
-        result = amap_service.get_poi_detail(poi_id)
-        
-        return POIDetailResponse(
-            success=True,
-            message="获取POI详情成功",
-            data=result
-        )
-        
-    except Exception as e:
-        print(f"❌ 获取POI详情失败: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取POI详情失败: {str(e)}"
-        )
+class ArticleSearchRequest(BaseModel):
+    """文章搜索请求"""
+
+    query: str = Field(..., min_length=1, max_length=2000, description="搜索问题")
+    limit: int = Field(default=5, ge=1, le=10, description="候选文章数量")
 
 
-@router.get(
+def _to_sse(event: str, payload: dict) -> str:
+    """格式化SSE消息"""
+
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post(
     "/search",
-    summary="搜索POI",
-    description="根据关键词搜索POI"
+    summary="文章搜索",
+    description="搜索相关文章并生成汇总文本",
 )
-async def search_poi(keywords: str, city: str = "北京"):
-    """
-    搜索POI
+async def search_article(request: ArticleSearchRequest):
+    """非流式文章搜索接口"""
+    user_query = request.query.strip()
+    agent = get_article_agent()
 
-    Args:
-        keywords: 搜索关键词
-        city: 城市名称
+    search_result = agent.search_articles(user_query, limit=request.limit)
+    articles = search_result["articles"]
 
-    Returns:
-        搜索结果
-    """
-    try:
-        amap_service = get_amap_service()
-        result = amap_service.search_poi(keywords, city)
+    summary = ""
+    for chunk in agent.stream_summarize(user_query, articles):
+        summary += chunk
 
-        return {
-            "success": True,
-            "message": "搜索成功",
-            "data": result
-        }
+    return {
+        "success": True,
+        "message": "文章搜索成功",
+        "data": {
+            "rewritten_query": search_result["rewritten_query"],
+            "articles": articles,
+            "summary": summary,
+        },
+    }
 
-    except Exception as e:
-        print(f"❌ 搜索POI失败: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"搜索POI失败: {str(e)}"
-        )
 
-    """
-    获取景点图片
+@router.post(
+    "/stream",
+    summary="流式文章搜索与汇总",
+    description="先返回搜索结果，再流式返回汇总内容",
+)
+async def stream_article(request: ArticleSearchRequest):
+    """流式文章搜索接口"""
 
-    Args:
-        name: 景点名称
+    async def event_generator() -> AsyncGenerator[str, None]:
+        try:
+            user_query = request.query.strip()
+            if not user_query:
+                yield _to_sse("error", {"message": "搜索内容不能为空"})
+                return
 
-    Returns:
-        图片URL
-    """
-    try:
-        unsplash_service = get_unsplash_service()
+            yield _to_sse("start", {"message": "搜索子Agent开始检索"})
 
-        # 搜索景点图片
-        photo_url = unsplash_service.get_photo_url(f"{name} China landmark")
+            agent = get_article_agent()
+            search_result = agent.search_articles(user_query, limit=request.limit)
+            articles = search_result["articles"]
 
-        if not photo_url:
-            # 如果没找到,尝试只用景点名称搜索
-            photo_url = unsplash_service.get_photo_url(name)
+            yield _to_sse(
+                "search_results",
+                {
+                    "rewritten_query": search_result["rewritten_query"],
+                    "articles": articles,
+                },
+            )
 
-        return {
-            "success": True,
-            "message": "获取图片成功",
-            "data": {
-                "name": name,
-                "photo_url": photo_url
-            }
-        }
+            yield _to_sse("summary_start", {"message": "汇总子Agent开始生成总结"})
+            for chunk in agent.stream_summarize(user_query, articles):
+                if chunk:
+                    yield _to_sse("chunk", {"content": chunk})
 
-    except Exception as e:
-        print(f"❌ 获取景点图片失败: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"获取景点图片失败: {str(e)}"
-        )
+            yield _to_sse("done", {"message": "完成"})
+        except Exception as e:
+            yield _to_sse("error", {"message": f"文章搜索失败: {str(e)}"})
 
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

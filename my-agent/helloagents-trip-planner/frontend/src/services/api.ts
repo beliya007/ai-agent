@@ -66,6 +66,18 @@ interface StreamChatOptions {
   onError?: (message: string) => void
 }
 
+export interface ArticleSearchItem {
+  title: string
+  snippet: string
+  url: string
+}
+
+interface StreamArticleOptions {
+  onSearchResults: (payload: { rewritten_query: string; articles: ArticleSearchItem[] }) => void
+  onChunk: (chunk: string) => void | Promise<void>
+  onError?: (message: string) => void
+}
+
 /**
  * 聊天流式响应
  */
@@ -120,6 +132,73 @@ export async function streamChat(message: string, options: StreamChatOptions): P
 
       if (eventName === 'error' && options.onError) {
         options.onError(payload.message || '聊天失败')
+      }
+    }
+  }
+}
+
+/**
+ * 文章搜索与汇总流式响应
+ */
+export async function streamArticleSearch(
+  query: string,
+  options: StreamArticleOptions,
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/article/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, limit: 6 }),
+  })
+
+  if (!response.ok || !response.body) {
+    throw new Error(`文章请求失败: ${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    const events = buffer.split('\n\n')
+    buffer = events.pop() || ''
+
+    for (const rawEvent of events) {
+      const lines = rawEvent.split('\n')
+      const eventLine = lines.find((line) => line.startsWith('event:'))
+      const dataLine = lines.find((line) => line.startsWith('data:'))
+      if (!eventLine || !dataLine) {
+        continue
+      }
+
+      const eventName = eventLine.replace('event:', '').trim()
+      let payload: any = {}
+      try {
+        payload = JSON.parse(dataLine.replace('data:', '').trim())
+      } catch {
+        payload = {}
+      }
+
+      if (eventName === 'search_results') {
+        options.onSearchResults({
+          rewritten_query: payload.rewritten_query || '',
+          articles: Array.isArray(payload.articles) ? payload.articles : [],
+        })
+      }
+
+      if (eventName === 'chunk' && payload.content) {
+        await options.onChunk(payload.content)
+      }
+
+      if (eventName === 'error' && options.onError) {
+        options.onError(payload.message || '文章搜索失败')
       }
     }
   }

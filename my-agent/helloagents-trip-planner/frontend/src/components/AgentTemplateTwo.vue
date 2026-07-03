@@ -37,8 +37,25 @@
         <div class="panel-title">内容预览区</div>
       </template>
 
-      <div v-if="latestAssistantReply" class="preview-content">{{ latestAssistantReply }}</div>
-      <el-empty v-else description="右侧预览区域（可用于文章/报告/结构化结果展示）" />
+      <div class="preview-content">
+        <div v-if="rewrittenQuery" class="meta-line">
+          检索关键词: {{ rewrittenQuery }}
+        </div>
+
+        <div v-if="searchResults.length > 0" class="result-list">
+          <div v-for="(item, index) in searchResults" :key="`${item.title}-${index}`" class="result-item">
+            <a :href="item.url" target="_blank" rel="noopener noreferrer" class="result-title">{{ item.title }}</a>
+            <p class="result-snippet">{{ item.snippet }}</p>
+          </div>
+        </div>
+
+        <div v-if="latestAssistantReply" class="summary-block">{{ latestAssistantReply }}</div>
+
+        <el-empty
+          v-if="searchResults.length === 0 && !latestAssistantReply"
+          description="输入问题后，右侧将展示搜索候选与汇总结果"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -46,7 +63,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { streamChat } from '@/services/api'
+import { streamArticleSearch } from '@/services/api'
+import type { ArticleSearchItem } from '@/services/api'
 
 interface ChatMessageItem {
   id: string
@@ -57,6 +75,8 @@ interface ChatMessageItem {
 const inputMessage = ref('')
 const isStreaming = ref(false)
 const messages = ref<ChatMessageItem[]>([])
+const rewrittenQuery = ref('')
+const searchResults = ref<ArticleSearchItem[]>([])
 const messageContainerRef = ref<HTMLElement | null>(null)
 
 const latestAssistantReply = computed(() => {
@@ -78,6 +98,8 @@ const scrollToBottom = async () => {
 
 const clearMessages = () => {
   messages.value = []
+  rewrittenQuery.value = ''
+  searchResults.value = []
 }
 
 const handleEnter = (event: KeyboardEvent) => {
@@ -102,10 +124,16 @@ const sendMessage = async () => {
 
   inputMessage.value = ''
   isStreaming.value = true
+  rewrittenQuery.value = ''
+  searchResults.value = []
   await scrollToBottom()
 
   try {
-    await streamChat(content, {
+    await streamArticleSearch(content, {
+      onSearchResults: (payload) => {
+        rewrittenQuery.value = payload.rewritten_query
+        searchResults.value = payload.articles
+      },
       onChunk: async (chunk) => {
         const target = messages.value.find((item) => item.id === assistantMessageId)
         if (target) {
@@ -201,10 +229,54 @@ const sendMessage = async () => {
   height: calc(100vh - 290px);
   min-height: 360px;
   overflow-y: auto;
+  padding-right: 4px;
+}
+
+.meta-line {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+}
+
+.result-list {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.result-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.result-title {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.result-title:hover {
+  text-decoration: underline;
+}
+
+.result-snippet {
+  margin: 8px 0 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.summary-block {
   white-space: pre-wrap;
   line-height: 1.7;
   color: #1f2937;
-  padding-right: 4px;
+  border-top: 1px dashed #d1d5db;
+  padding-top: 12px;
 }
 
 @media (max-width: 1024px) {
