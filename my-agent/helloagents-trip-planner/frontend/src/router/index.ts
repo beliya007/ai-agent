@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '@/views/Home.vue'
 import Result from '@/views/Result.vue'
 import TravelAgentPanel from '@/components/TravelAgentPanel.vue'
-import AgentTemplateOne from '@/components/AgentTemplateOne.vue'
+import ChatAgentPanel from '@/components/ChatAgentPanel.vue'
 import AgentTemplateTwo from '@/components/AgentTemplateTwo.vue'
 
 const router = createRouter({
@@ -26,9 +26,9 @@ const router = createRouter({
           component: TravelAgentPanel
         },
         {
-          path: 'template-1',
-          name: 'AgentTemplateOne',
-          component: AgentTemplateOne
+          path: 'chat',
+          name: 'ChatAgent',
+          component: ChatAgentPanel
         },
         {
           path: 'template-2',
