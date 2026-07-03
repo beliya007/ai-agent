@@ -54,4 +54,8 @@ git merge feature/首页页面
 git push origin master
 ```
 
-#### 
+####虚拟环境
+创建
+py -3.13 -m venv venv
+激活
+.\venv\Scripts\Activate.ps1
