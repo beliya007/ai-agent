@@ -277,6 +277,17 @@ async with github_client:
     )
 # 步骤3：任何支持MCP的模型都能使用
 # OpenAI、Claude、Llama等都使用相同的MCP客户端
+
+
+#真实连接，例如command：npx，args：-y @model...
+                # 其他命令，使用通用 Stdio 传输
+                from fastmcp.client.transports import StdioTransport
+                return StdioTransport(
+                    command=server_source[0],
+                    args=server_source[1:] + self.server_args,
+                    env=self.env if self.env else None,
+                    **self.transport_kwargs
+                )
 ```
 
 ·

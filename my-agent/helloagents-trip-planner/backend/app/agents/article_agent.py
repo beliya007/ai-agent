@@ -147,3 +147,14 @@ def get_article_agent() -> ArticleAgent:
 		_article_agent_instance = ArticleAgent()
 	return _article_agent_instance
 
+if __name__ == "__main__":
+	# 测试文章Agent
+	agent = get_article_agent()
+	user_query = "人工智能在医疗领域的应用"
+	search_result = agent.search_articles(user_query)
+	print("搜索结果:")
+	print(search_result)
+
+	print("\n汇总结果:")
+	for chunk in agent.stream_summarize(user_query, search_result["articles"]):
+		print(chunk, end="")

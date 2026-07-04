@@ -55,6 +55,7 @@ git push origin master
 ```
 
 ####虚拟环境
+cd my-agent\helloagents-trip-planner\backend
 创建
 py -3.13 -m venv venv
 激活
