@@ -77,130 +77,24 @@ class ArticleAgent:
 		)
 		print(f"🔍 搜索子Agent输出--: {agent_output}")
 		# 解析工具执行结果,提取论文列表,提取
-		# tool_results=
-		# llm_output=
-		rewritten_query = user_query
-		# papers = self._extract_paper_items(agent_output)
-		# articles = self._normalize_papers_to_articles(papers, safe_limit)
-
+		tool_results = agent_output.get("last_tool_results", [])
+		llm_output = agent_output.get("final_response", "")
+		display_results = []
+		if isinstance(tool_results, list):
+			display_results = tool_results
+		elif isinstance(tool_results, str):
+			start = tool_results.find("[")
+			end = tool_results.rfind("]")
+			if start != -1 and end != -1 and start < end:
+				try:
+					display_results = json.loads(tool_results[start : end + 1])
+				except json.JSONDecodeError:
+					display_results = []
+		print(f"🔍 前端展示结果: {display_results}")
 		return {
-			"rewritten_query": rewritten_query,
-			"articles": articles,
+			"rewritten_query": llm_output,
+			"articles": display_results,
 		}
-
-	def _normalize_papers_to_articles(self, papers: List[Dict[str, Any]], limit: int) -> List[Dict[str, str]]:
-		"""将论文结果标准化为前端可渲染结构"""
-		items: List[Dict[str, str]] = []
-		seen_keys = set()
-
-		for paper in papers:
-			if not isinstance(paper, dict):
-				continue
-
-			title = str(paper.get("title", "")).strip() or "未命名论文"
-			snippet = str(
-				paper.get("abstract")
-				or paper.get("summary")
-				or paper.get("snippet")
-				or paper.get("description")
-				or "暂无摘要"
-			).strip()
-			url = str(
-				paper.get("url")
-				or paper.get("pdf_url")
-				or paper.get("link")
-				or ""
-			).strip()
-
-			key = (title.lower(), url)
-			if key in seen_keys:
-				continue
-
-			seen_keys.add(key)
-			items.append(
-				{
-					"title": title,
-					"snippet": snippet,
-					"url": url,
-				}
-			)
-
-			if len(items) >= limit:
-				break
-
-		return items
-
-	def _extract_paper_items(self, raw_result: Any) -> List[Dict[str, Any]]:
-		"""从Agent输出中提取论文数组,兼容纯JSON与带前缀文本"""
-		parsed = self._parse_json_payload(raw_result)
-
-		if isinstance(parsed, list):
-			return [item for item in parsed if isinstance(item, dict)]
-
-		if isinstance(parsed, dict):
-			for key in ("papers", "results", "items", "data"):
-				value = parsed.get(key)
-				if isinstance(value, list):
-					return [item for item in value if isinstance(item, dict)]
-
-		return []
-
-	def _parse_json_payload(self, raw_result: Any) -> Any:
-		"""解析JSON负载: 支持对象/数组与前后缀文本混合场景"""
-		if isinstance(raw_result, (list, dict)):
-			return raw_result
-
-		if not isinstance(raw_result, str):
-			return None
-
-		text = raw_result.strip()
-		if not text:
-			return None
-
-		# 先尝试完整JSON
-		try:
-			return json.loads(text)
-		except Exception:
-			pass
-
-		# 再扫描首个可解析JSON,适配“工具执行结果:\n[...]”格式
-		decoder = json.JSONDecoder()
-		for i, ch in enumerate(text):
-			if ch not in "[{":
-				continue
-			try:
-				obj, _ = decoder.raw_decode(text[i:])
-				return obj
-			except Exception:
-				continue
-
-		return None
-
-	def stream_summarize(self, user_query: str, articles: List[Dict[str, str]]) -> Iterator[str]:
-		"""流式汇总"""
-		if not articles:
-			yield "未检索到相关文章。建议你换一个更具体的关键词，例如加入领域、年份或作者。"
-			return
-
-		context = []
-		for idx, article in enumerate(articles, start=1):
-			context.append(
-				f"[{idx}] 标题: {article['title']}\n"
-				f"摘要: {article['snippet']}\n"
-				f"链接: {article['url']}"
-			)
-
-		prompt = (
-			f"用户需求: {user_query}\n\n"
-			"候选文章:\n"
-			+ "\n\n".join(context)
-			+ "\n\n请基于候选文章给出汇总。"
-		)
-
-		for chunk in self.summary_agent.stream_run(prompt):
-			yield chunk
-
-
 
 _article_agent_instance = None
 
@@ -219,8 +113,8 @@ if __name__ == "__main__":
 	agent = get_article_agent()
 	user_query = "人工智能在医疗领域的应用"
 	search_result = agent.search_articles(user_query)
-	print("搜索结果----:", search_result)
+	# print("搜索结果----:", search_result)
 
-	print("\n汇总结果:")
-	for chunk in agent.stream_summarize(user_query, search_result["articles"]):
-		print(chunk, end="")
+	# print("\n汇总结果:")
+	# for chunk in agent.stream_summarize(user_query, search_result["articles"]):
+	# 	print(chunk, end="")

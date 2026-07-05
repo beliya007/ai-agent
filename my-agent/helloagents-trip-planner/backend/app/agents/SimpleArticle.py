@@ -9,7 +9,7 @@ from hello_agents.core.message import Message
 class SimpleArticleAgent(SimpleAgent):
 	"""SimpleAgent variant that includes tool results in the final response."""
 
-	def run(self, input_text: str, max_tool_iterations: int = 3, **kwargs) -> str:
+	def run(self, input_text: str, max_tool_iterations: int = 3, **kwargs) -> dict:
 		"""
 		Run agent with optional tool calling and append tool execution results.
 
@@ -80,15 +80,20 @@ class SimpleArticleAgent(SimpleAgent):
 		if current_iteration >= max_tool_iterations and not final_response:
 			final_response = self.llm.invoke(messages, **kwargs)
 
-		if last_tool_results:
-			tool_result_block = "\n\n".join(last_tool_results)
-			final_response = (
-				f"{final_response}\n\n"
-				"===== 工具执行结果 =====\n"
-				f"{tool_result_block}"
-			)
+		# if last_tool_results:
+		# 	tool_result_block = "\n\n".join(last_tool_results)
+		# 	final_response = (
+		# 		f"{final_response}\n\n"
+		# 		"===== 工具执行结果 =====\n"
+		# 		f"{tool_result_block}"
+		# 	)
 
 		self.add_message(Message(input_text, "user"))
 		self.add_message(Message(final_response, "assistant"))
-		return final_response
+		print(f"🔚 Agent最终输出: {final_response}")
+		print(f"🔧 最后一次工具执行结果: {last_tool_results}")
+		return {
+			"final_response": final_response,
+			"last_tool_results": last_tool_results[0] if last_tool_results else None,
+		}
 
