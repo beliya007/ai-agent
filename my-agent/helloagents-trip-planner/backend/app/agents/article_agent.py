@@ -4,6 +4,8 @@ import json
 from typing import Any, Dict, Iterator, List
 
 from hello_agents import SimpleAgent
+from .SimpleArticle import SimpleArticleAgent
+
 from hello_agents.tools import MCPTool
 
 from ..services.llm_service import get_llm
@@ -60,7 +62,7 @@ class ArticleAgent:
 			server_command=PAPER_SEARCH_SERVER_COMMAND,
 			auto_expand=True,
 		)
-		self.search_agent = SimpleAgent(
+		self.search_agent = SimpleArticleAgent(
 			name="文章搜索子Agent",
 			llm=llm,
 			system_prompt=SEARCH_AGENT_PROMPT,
@@ -79,24 +81,10 @@ class ArticleAgent:
 			f"用户问题: {user_query}\n请检索相关论文,最多返回{safe_limit}条。"
 		)
 		print(f"🔍 搜索子Agent输出--: {agent_output}")
+
 		rewritten_query = user_query
-		articles: List[Dict[str, str]] = []
-
-		parsed = self._parse_json_payload(agent_output)
-		if isinstance(parsed, dict):
-			candidate_query = str(parsed.get("rewritten_query", "")).strip()
-			if candidate_query:
-				rewritten_query = candidate_query
-
-			papers = parsed.get("papers")
-			if isinstance(papers, list):
-				articles = self._normalize_papers_to_articles(papers, safe_limit)
-
-		if not articles:
-			articles = self._normalize_papers_to_articles(
-				self._extract_paper_items(agent_output),
-				safe_limit,
-			)
+		papers = self._extract_paper_items(agent_output)
+		articles = self._normalize_papers_to_articles(papers, safe_limit)
 
 		return {
 			"rewritten_query": rewritten_query,
@@ -104,7 +92,7 @@ class ArticleAgent:
 		}
 
 	def _normalize_papers_to_articles(self, papers: List[Dict[str, Any]], limit: int) -> List[Dict[str, str]]:
-		"""将论文数据标准化为前端展示结构"""
+		"""将论文结果标准化为前端可渲染结构"""
 		items: List[Dict[str, str]] = []
 		seen_keys = set()
 
@@ -141,9 +129,55 @@ class ArticleAgent:
 			)
 
 			if len(items) >= limit:
-				return items[:limit]
+				break
 
-		return items[:limit]
+		return items
+
+	def _extract_paper_items(self, raw_result: Any) -> List[Dict[str, Any]]:
+		"""从Agent输出中提取论文数组,兼容纯JSON与带前缀文本"""
+		parsed = self._parse_json_payload(raw_result)
+
+		if isinstance(parsed, list):
+			return [item for item in parsed if isinstance(item, dict)]
+
+		if isinstance(parsed, dict):
+			for key in ("papers", "results", "items", "data"):
+				value = parsed.get(key)
+				if isinstance(value, list):
+					return [item for item in value if isinstance(item, dict)]
+
+		return []
+
+	def _parse_json_payload(self, raw_result: Any) -> Any:
+		"""解析JSON负载: 支持对象/数组与前后缀文本混合场景"""
+		if isinstance(raw_result, (list, dict)):
+			return raw_result
+
+		if not isinstance(raw_result, str):
+			return None
+
+		text = raw_result.strip()
+		if not text:
+			return None
+
+		# 先尝试完整JSON
+		try:
+			return json.loads(text)
+		except Exception:
+			pass
+
+		# 再扫描首个可解析JSON,适配“工具执行结果:\n[...]”格式
+		decoder = json.JSONDecoder()
+		for i, ch in enumerate(text):
+			if ch not in "[{":
+				continue
+			try:
+				obj, _ = decoder.raw_decode(text[i:])
+				return obj
+			except Exception:
+				continue
+
+		return None
 
 	def stream_summarize(self, user_query: str, articles: List[Dict[str, str]]) -> Iterator[str]:
 		"""流式汇总"""
@@ -169,46 +203,6 @@ class ArticleAgent:
 		for chunk in self.summary_agent.stream_run(prompt):
 			yield chunk
 
-	def _extract_paper_items(self, raw_result: Any) -> List[Dict[str, Any]]:
-		"""兼容不同MCP返回格式,提取论文数组"""
-		parsed = self._parse_json_payload(raw_result)
-
-		if isinstance(parsed, list):
-			return [item for item in parsed if isinstance(item, dict)]
-
-		if isinstance(parsed, dict):
-			for key in ("papers", "results", "items", "data"):
-				value = parsed.get(key)
-				if isinstance(value, list):
-					return [item for item in value if isinstance(item, dict)]
-
-		return []
-
-	def _parse_json_payload(self, raw_result: Any) -> Any:
-		"""解析MCP工具返回,支持字符串与对象格式"""
-		if isinstance(raw_result, (list, dict)):
-			return raw_result
-
-		if not isinstance(raw_result, str):
-			return None
-
-		text = raw_result.strip()
-		if not text:
-			return None
-
-		try:
-			return json.loads(text)
-		except Exception:
-			start = text.find("[")
-			end = text.rfind("]")
-			if start != -1 and end != -1 and end > start:
-				candidate = text[start : end + 1]
-				try:
-					return json.loads(candidate)
-				except Exception:
-					return None
-
-		return None
 
 
 _article_agent_instance = None
@@ -228,8 +222,7 @@ if __name__ == "__main__":
 	agent = get_article_agent()
 	user_query = "人工智能在医疗领域的应用"
 	search_result = agent.search_articles(user_query)
-	print("搜索结果----:")
-	print(search_result)
+	print("搜索结果----:", search_result)
 
 	print("\n汇总结果:")
 	for chunk in agent.stream_summarize(user_query, search_result["articles"]):
