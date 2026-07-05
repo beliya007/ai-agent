@@ -16,19 +16,14 @@ SEARCH_AGENT_PROMPT = """你是论文检索专家。
 **重要提示:**
 你必须使用paper-search MCP工具检索,不要编造论文信息。
 
-**可用工具调用格式:**
+**可用工具调用格式示例:**
 - arXiv: `[TOOL_CALL:paper_search_search_arxiv:query=检索词,max_results=数量]`
 - PubMed: `[TOOL_CALL:paper_search_search_pubmed:query=检索词,max_results=数量]`
-- bioRxiv: `[TOOL_CALL:paper_search_search_biorxiv:query=检索词,max_results=数量]`
-- medRxiv: `[TOOL_CALL:paper_search_search_medrxiv:query=检索词,max_results=数量]`
-- Google Scholar: `[TOOL_CALL:paper_search_search_google_scholar:query=检索词,max_results=数量]`
 
 **规则:**
 1. 必须至少调用一次工具。
 2. 默认优先使用arXiv,必要时再补充PubMed。
 3. 先将用户问题精炼成简短英文或中英混合检索词再调用工具。
-4. 当你收到“工具执行结果”后,将工具执行结果原封不动地返回,保留工具返回的格式。
-5. 无论如何，保留最后一次工具调用的结果,不要丢失。
 """
 
 
@@ -81,10 +76,12 @@ class ArticleAgent:
 			f"用户问题: {user_query}\n请检索相关论文,最多返回{safe_limit}条。"
 		)
 		print(f"🔍 搜索子Agent输出--: {agent_output}")
-
+		# 解析工具执行结果,提取论文列表,提取
+		# tool_results=
+		# llm_output=
 		rewritten_query = user_query
-		papers = self._extract_paper_items(agent_output)
-		articles = self._normalize_papers_to_articles(papers, safe_limit)
+		# papers = self._extract_paper_items(agent_output)
+		# articles = self._normalize_papers_to_articles(papers, safe_limit)
 
 		return {
 			"rewritten_query": rewritten_query,
