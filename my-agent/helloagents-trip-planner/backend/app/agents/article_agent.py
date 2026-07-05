@@ -21,13 +21,12 @@ SEARCH_AGENT_PROMPT = """你是论文检索专家。
 - medRxiv: `[TOOL_CALL:paper_search_search_medrxiv:query=检索词,max_results=数量]`
 - Google Scholar: `[TOOL_CALL:paper_search_search_google_scholar:query=检索词,max_results=数量]`
 
-规则:
+**规则:**
 1. 必须至少调用一次工具。
 2. 默认优先使用arXiv,必要时再补充PubMed。
 3. 先将用户问题精炼成简短英文或中英混合检索词再调用工具。
-4. 工具执行后,只输出如下JSON:
-	{"rewritten_query":"...","papers":[...工具返回的论文数组...]}
-5. 不要输出除JSON以外的任何文本。
+4. 当你收到“工具执行结果”后,将工具执行结果原封不动地返回,保留工具返回的格式。
+5. 无论如何，保留最后一次工具调用的结果,不要丢失。
 """
 
 
@@ -42,7 +41,7 @@ PAPER_SEARCH_SERVER_COMMAND = [
 SUMMARY_AGENT_PROMPT = """你是文章汇总助手。
 你会基于给定的文章候选信息生成中文总结。
 
-规则:
+**规则:**
 1. 先给出简短结论。
 2. 再给出要点列表。
 3. 明确标注信息可能不完整或有时效性。
@@ -79,7 +78,7 @@ class ArticleAgent:
 		agent_output = self.search_agent.run(
 			f"用户问题: {user_query}\n请检索相关论文,最多返回{safe_limit}条。"
 		)
-
+		print(f"🔍 搜索子Agent输出--: {agent_output}")
 		rewritten_query = user_query
 		articles: List[Dict[str, str]] = []
 
@@ -229,7 +228,7 @@ if __name__ == "__main__":
 	agent = get_article_agent()
 	user_query = "人工智能在医疗领域的应用"
 	search_result = agent.search_articles(user_query)
-	print("搜索结果:")
+	print("搜索结果----:")
 	print(search_result)
 
 	print("\n汇总结果:")

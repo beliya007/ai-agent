@@ -428,3 +428,22 @@ def get_trip_planner_agent() -> MultiAgentTripPlanner:
 
     return _multi_agent_planner
 
+if __name__ == "__main__":
+    # 测试多智能体旅行规划系统
+    #cd app\agents
+    #python -m app.agents.trip_planner_agent
+    agent = get_trip_planner_agent()
+    test_request = TripRequest(
+        city="北京",
+        start_date="2024-07-01",
+        end_date="2024-07-03",
+        travel_days=3,
+        transportation="地铁",
+        accommodation="经济型酒店",
+        preferences=["历史文化", "美食"],
+        free_text_input="希望每天安排一个博物馆参观"
+    )
+    trip_plan = agent.plan_trip(test_request)
+    print("生成的旅行计划:")
+    print(json.dumps(trip_plan.dict(), ensure_ascii=False, indent=2))
+
